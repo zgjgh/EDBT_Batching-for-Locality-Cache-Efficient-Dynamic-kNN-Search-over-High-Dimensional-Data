@@ -1,0 +1,10 @@
+build/
+build_*/
+cmake-build-*/
+out/
+*.exe
+*.o
+datasets/
+*_I.txt
+*_U.txt
+*_model_curve.csv
