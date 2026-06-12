@@ -64,30 +64,42 @@ Example:
 ## 4) Usage — bench
 
 ```bash
-./bench <dataset_key> <single|batch|model> [dataset_path]
+./bench <dataset_key> <method> [dataset_path]
 ```
 
 - `dataset_key` ∈ { nuswide, audio, cifar, sun, fashion, trevi, smoke } —
   selects a built-in configuration (dimension, tree parameters, and the
   initial-query / inserted-query / reference-set split).
-- `single` — point-wise Δ-Tree search over the inserted queries.
-- `batch`  — batch search. The cluster count defaults to 150
-  (capacity |W|/150); override it with the `BENCH_CLUSTERS` environment
-  variable.
-- `model`  — batch-size cost model: estimates the model parameters, selects
-  the batch capacity minimizing the predicted cost, prints the recommended
-  cluster count, and writes the predicted cost curve to
-  `<key>_model_curve.csv`.
 - `dataset_path` overrides the built-in default `./datasets/<file>`.
+
+Methods (each computes the exact kNN results of all inserted queries and
+reports the wall-clock time):
+
+| method | description |
+|---|---|
+| `scan` | sequential scan over the reference set |
+| `idistance` | iDistance index search |
+| `single` | point-wise Δ-Tree search |
+| `batch` | batch Δ-Tree search; cluster count defaults to 150 (capacity \|W\|/150), override with `BENCH_CLUSTERS` |
+| `parallel` | batch search with the per-cluster searches processed in parallel (hardware threads) |
+| `model` | batch-size cost model: selects the capacity minimizing the predicted cost, prints the recommended cluster count, writes `<key>_model_curve.csv` |
+
+The FAISS and nanoflann baselines are separate programs (Section 5).
 
 Typical workflow:
 
 ```bash
+# baselines and our variants
+./bench nuswide scan      ./datasets/Normalized_WT.dat
+./bench nuswide idistance ./datasets/Normalized_WT.dat
+./bench nuswide single    ./datasets/Normalized_WT.dat
+./bench nuswide batch     ./datasets/Normalized_WT.dat   # heuristic capacity |W|/150
+./bench nuswide parallel  ./datasets/Normalized_WT.dat
+
+# model-selected capacity
 ./bench nuswide model ./datasets/Normalized_WT.dat
 # -> prints: optimal batch capacity, recommended cluster count (e.g. 180)
-
 BENCH_CLUSTERS=180 ./bench nuswide batch ./datasets/Normalized_WT.dat
-./bench nuswide single ./datasets/Normalized_WT.dat
 ```
 
 Each timed run reports the wall-clock time of the inserted-query kNN

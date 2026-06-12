@@ -222,10 +222,26 @@ static void dumpIfRequested(const DatasetCfg& cfg) {
     }
 }
 
+static const char* kMethods[] = {
+    "single", "batch", "parallel", "scan", "idistance", "model"
+};
+
+static bool isValidMethod(const std::string& m) {
+    for (const char* s : kMethods) if (m == s) return true;
+    return false;
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <dataset_key> <single|batch|model> [dataset_path]\n"
+        std::cerr << "Usage: " << argv[0]
+                  << " <dataset_key> <single|batch|parallel|scan|idistance|model> [dataset_path]\n"
                   << "  dataset_key in { trevi , nuswide , cifar , audio , sun , fashion , smoke }\n"
+                  << "  single    : point-wise delta-tree search\n"
+                  << "  batch     : batch search (cluster count: 150 or BENCH_CLUSTERS)\n"
+                  << "  parallel  : batch search with parallel cluster processing\n"
+                  << "  scan      : sequential scan over the reference set\n"
+                  << "  idistance : iDistance index search\n"
+                  << "  model     : batch-size cost model (writes <key>_model_curve.csv)\n"
                   << "  dataset_path (optional) overrides the built-in default path\n";
         return 1;
     }
@@ -234,8 +250,8 @@ int main(int argc, char** argv) {
 
     const DatasetCfg* cfg = findConfig(dsKey);
     if (!cfg) { std::cerr << "Unknown dataset_key '" << dsKey << "'.\n"; return 1; }
-    if (method != "single" && method != "batch" && method != "model") {
-        std::cerr << "Unknown method '" << method << "'. Use single, batch or model.\n"; return 1;
+    if (!isValidMethod(method)) {
+        std::cerr << "Unknown method '" << method << "'.\n"; return 1;
     }
     const char* path = (argc >= 4) ? argv[3] : cfg->path;
 
@@ -268,20 +284,42 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // ---- iDistance setup (index construction, not timed) ----
+    if (method == "idistance") {
+        g_tree.form_item_clusters(60);
+        g_tree.complete_tree();
+    }
+
     printf(">>> START UPDATE  [%s]  dataset=%s  inserting %ld queries ...\n",
            method.c_str(), cfg->key, cfg->insertion_number);
     fflush(stdout);
 
-    // ---- time only the inserted-query kNN maintenance ----
+    // ---- time only the inserted-query kNN computation ----
     auto t0 = std::chrono::steady_clock::now();
     if (method == "single") {
         ITT_BEGIN_SINGLE();
         for (long i = 0; i < cfg->insertion_number; ++i) g_tree.update_user_add_deltatree();
         ITT_END_SINGLE();
-    } else {
+    } else if (method == "batch") {
         ITT_BEGIN_BATCH();
         g_tree.update_user_add_batch_bycluster(cfg->insertion_number);
         ITT_END_BATCH();
+    } else if (method == "parallel") {
+        g_tree.update_user_add_batch_bycluster_paralell(cfg->insertion_number);
+    } else if (method == "scan") {
+        for (long i = 0; i < cfg->insertion_number; ++i) {
+            auto* u = new User(g_tree.data->U.row(g_tree.numUsers + g_tree.add_user_num), g_tree.k);
+            u->computeKNN(g_tree.slidingWindow);
+            g_tree.Users.emplace_back(u);
+            g_tree.add_user_num += 1;
+        }
+    } else { // idistance
+        for (long i = 0; i < cfg->insertion_number; ++i) {
+            auto* u = new User(g_tree.data->U.row(g_tree.numUsers + g_tree.add_user_num), g_tree.k);
+            g_tree.user_computeknn_id(u, 0.01, 0.01, false);
+            g_tree.Users.emplace_back(u);
+            g_tree.add_user_num += 1;
+        }
     }
     auto t1 = std::chrono::steady_clock::now();
     double sec = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1e6;

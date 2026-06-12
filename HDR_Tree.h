@@ -626,6 +626,7 @@ public:
 
 
     void update_user_add_batch_bycluster(long n);
+    void update_user_add_batch_bycluster_paralell(long n);
     void update_user_add_batch_bycluster_prune(long n);
 
     float time_recorder;

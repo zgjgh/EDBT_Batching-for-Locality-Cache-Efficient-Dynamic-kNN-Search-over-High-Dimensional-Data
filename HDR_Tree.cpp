@@ -1,4 +1,5 @@
 #include "HDR_Tree.h"
+#include <atomic>
 //#include "User.cpp"
 
 HDR_Tree::HDR_Tree()
@@ -7241,6 +7242,68 @@ void HDR_Tree::update_user_add_batch_bycluster_prune(long n){
 };
 
 
+
+
+// parallel variant: the per-cluster collective searches are independent and
+// are distributed over a pool of hardware threads
+void HDR_Tree::update_user_add_batch_bycluster_paralell(long n){
+
+    long i;
+
+    std::vector<User*> user_knn;
+
+    for(i=0; i<n; i++){
+
+        auto new_user= new User(data->U.row(numUsers+add_user_num), k);
+
+        Users.emplace_back(new_user);
+
+        add_user_num=add_user_num+1;
+
+        new_user->center_low=data->Mat_low_d*new_user->center;
+
+        projectUser_item(new_user);
+
+        for(auto u_lowd_item:Trans_u_i){
+            new_user->u_low_d_i.emplace_back(u_lowd_item);
+        }
+
+        user_knn.emplace_back(new_user);
+    }
+
+    userclusters_false();
+    usercluster_radius_zero();
+    usercluster_updated_user_clear();
+    clear_clusters_haveuserknn();
+
+    distribute_user_needknn(&user_knn);
+
+    {
+        unsigned nt = std::thread::hardware_concurrency();
+        if (nt == 0) nt = 4;
+        std::atomic<size_t> next(0);
+        std::vector<std::thread> pool;
+        for (unsigned t = 0; t < nt; ++t) {
+            pool.emplace_back([&]() {
+                size_t idx;
+                while ((idx = next.fetch_add(1)) < clusters_haveuserknn.size()) {
+                    auto user_cluster = clusters_haveuserknn[idx];
+                    knn_by_clusters(user_cluster, itemRoot_i);
+                    user_cluster->user_need_knnlist.clear();
+                    user_cluster->have_user=false;
+                    user_cluster->radius_user_need_knn=0;
+                }
+            });
+        }
+        for (auto& th : pool) th.join();
+    }
+
+    clear_clusters_haveuserknn();
+
+    for(auto user: user_knn){
+        update_user_hdr(user, Mode::Add, root);
+    }
+};
 
 
 void HDR_Tree::update_user_add_batch_bycluster(long n){
